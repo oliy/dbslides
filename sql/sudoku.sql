@@ -12,6 +12,10 @@
 -- numbers.  (like reading off a printed sudoku board)
 
 -- Recurse over all permutations of potential solutions
+--
+-- This one isn't mine, I just annotated it:
+-- (originally from https://www.postgresql.org/message-id/b1b9fac60911041518o3c5f6917r9d47b60feab76512@mail.gmail.com)
+
 with recursive sudoku(board) AS ( 
   -- Initial Sudoku configuration
   select '53  7    6  195    98    6 8   6   34  8 3  17   2   6 6    28    419  5    8  79'
