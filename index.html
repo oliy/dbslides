@@ -1,49 +1,786 @@
 <!doctype html>
 <html>
-	<head>
-		<meta charset="utf-8">
-		<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<head>
+	<meta charset="utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 
-		<title>reveal.js</title>
+	<title>Jumping the Postgres Shark:</title>
 
-		<link rel="stylesheet" href="css/reset.css">
-		<link rel="stylesheet" href="css/reveal.css">
-		<link rel="stylesheet" href="css/theme/black.css">
+	<link rel="stylesheet" href="css/reset.css">
+	<link rel="stylesheet" href="css/reveal.css">
+	<link rel="stylesheet" href="css/theme/black.css">
 
-		<!-- Theme used for syntax highlighting of code -->
-		<link rel="stylesheet" href="lib/css/monokai.css">
+	<!-- Theme used for syntax highlighting of code -->
+	<link rel="stylesheet" href="lib/css/monokai.css">
 
-		<!-- Printing and PDF exports -->
-		<script>
-			var link = document.createElement( 'link' );
-			link.rel = 'stylesheet';
-			link.type = 'text/css';
-			link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
-			document.getElementsByTagName( 'head' )[0].appendChild( link );
-		</script>
-	</head>
-	<body>
-		<div class="reveal">
-			<div class="slides">
-				<section>Slide 1</section>
-				<section>Slide 2</section>
-			</div>
-		</div>
+	<style type="text/css">
+		.reveal .slides h2 {
+			color: #83b9e2;
+		}
+	</style>
 
-		<script src="js/reveal.js"></script>
+	<!-- Printing and PDF exports -->
+	<script>
+		var link = document.createElement( 'link' );
+		link.rel = 'stylesheet';
+		link.type = 'text/css';
+		link.href = window.location.search.match( /print-pdf/gi ) ? 'css/print/pdf.css' : 'css/print/paper.css';
+		document.getElementsByTagName( 'head' )[0].appendChild( link );
+	</script>
+</head>
+<body><div class="reveal"><div class="slides">
 
-		<script>
-			// More info about config & dependencies:
-			// - https://github.com/hakimel/reveal.js#configuration
-			// - https://github.com/hakimel/reveal.js#dependencies
-			Reveal.initialize({
-				dependencies: [
-					{ src: 'plugin/markdown/marked.js' },
-					{ src: 'plugin/markdown/markdown.js' },
-					{ src: 'plugin/notes/notes.js', async: true },
-					{ src: 'plugin/highlight/highlight.js', async: true }
-				]
-			});
-		</script>
-	</body>
+<section data-markdown><textarea data-templates>
+## Jumping the Postgres Shark
+
+#### Oliver Yu
+</textarea></section>
+
+<section>
+	<section data-markdown data-separator-notes="^Note:"><textarea data-templates>
+	## Jumping the Shark
+	![Jumping the Shark](img/jshark.png)<!-- .element class="plain" style="background: none" -->
+
+	Note:
+	- Originally from Happy Days, 70s show about the 50s.
+	- Fonzi, the "cool" characer, saves the day, becomes superhuman.
+	- Fonzi literally ski jumps over shark.
+	- Spawns numerous references over the internet.
+	- Term has now "jumped the shark"
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	Internet meme signifying the point at which a 
+	good thing goes overboard and becomes bad.
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	Upleveling your DB toolbox to the point of absurdity,
+	and hopefully enjoying yourself along the way.
+	</textarea></section>
+</section>
+
+<section>
+	<section data-markdown><textarea data-templates>
+	## Simple Tricks 
+	![Simple Start](img/jump_1simple.jpg)<!-- .element height="60%" width="60%" -->
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	### Looping with generate_series
+
+	```sql
+    SELECT x FROM generate_series(1,10) x
+	```
+
+	- Data generation
+	- Numerical calculations
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	### Pivot/Aggregation
+
+	```sql
+	select 
+	  sum(case when type='apple' then metric else 0 end) as apple, 
+	  sum(case when type='orange' then metric else 0 end) as orange, 
+	  sum(case when type='banana' then metric else 0 end) as banana
+	from sample;
+	```
+
+	- Aggregate different categeries of data in columns
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	### Pivoting
+
+	```sql
+	select 
+	  entities.*,
+	  -- slice eav table for each column, 
+	  -- using max to coalesce values across eav rows
+	  max(case when key='alias' then str end) as alias,
+	  max(case when key='score' then num end) as score,
+	  bool_or(case when key='test' then flag end) as flag
+	from entities
+	left outer join eav on entities.id = eav.id
+	group by entities.id, entities.name
+	order by entities.id
+	```
+
+	- Turn data in different rows into columns
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	http://github/oliy/dbslides/sql/pivot.sql
+	http://github/oliy/dbslides/sql/pivot_agg.sql
+	</textarea></section>
+
+</section>
+
+<section>
+	<section data-markdown><textarea data-templates>
+	## Queues (not PGQ)
+	![Skills](img/jump_2queues.jpg)<!-- .element height="60%" width="60%" -->
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Queues (not PGQ)
+	- Multiple writers
+	- Multiple consumers
+	- Messages consumed only once
+	- Work queue
+
+	Note:
+	- PG not best for scalable queues
+	- Vacuum often
+	- Keep working set small
+	- Main issues: contention/transactions
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	### Skip Locked
+
+	```sql
+	update queue
+	-- assign item
+	set processed = now()
+	where id in (
+	  select id
+	  from queue
+	  where processed is null
+	  -- deterministic order
+	  order by id
+	  limit 1
+	  -- skip already locked items
+	  for update skip locked
+	)
+	returning id
+	```
+
+	Note:
+	- Only PG 9.5+
+	- Select for update
+	- Skips already locked rows
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	### Advisory Locks
+
+	```sql
+	update queue
+	-- assign item
+	set processed = now()
+	where id in (
+	  -- select potential item
+	  ...
+	  -- try to lock
+	  where pg_try_advisory_lock(id)
+	  -- deterministic order
+	  order by id
+	  limit 1
+	) 
+	-- must recheck for MVCC race conditions
+	and processed is null
+	returning id
+	```
+
+	Note:
+	- More performance/concurrency
+	- Global lock namespace 
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	### Advisory Locks (potential items)
+
+	```sql
+	  -- select potential item
+	  select id
+	  from (
+	    select id
+	    from queue
+	    where processed is null
+	    order by id
+	    -- number of attempts
+	    limit 5
+	  ) potential
+	  -- try to lock
+	  where pg_try_advisory_lock(id)
+	  -- deterministic order
+	  order by id
+	  limit 1
+	```
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	http://github/oliy/dbslides/sql/queue.sql
+	- Demonstrates usage of SKIP LOCK
+	- Demo Single Transaction Advisory Lock
+	</textarea></section>
+</section>
+
+<section>
+	<section data-markdown><textarea data-templates>
+	## Tag Cloud
+	![Flying](img/jump_3tagcloud.gif)<!-- .element height="60%" width="60%" -->
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Tag Cloud
+	- Large cardinality of elements
+	- Associated with ad-hoc tags/names/labels
+	- Find elements by criteria on tags
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	### Array of Tags
+
+	```sql
+	create table doc (
+	  id int primary key,
+
+	  -- array of tag strings
+	  tags text[] not null
+	);
+	-- optimized index for string arrays
+	create index doc_tags on doc using gin(tags);
+
+	-- Usage example
+	select id from doc where tags @> 'Tag_51';
+	```
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	### IntArray
+
+	```sql
+	create table tags (
+	  id serial primary key,
+	  tag text not null
+	);
+	create unique index tags_tag on tags(tag);
+
+	create table doc (
+	  id serial primary key,
+	  -- reference to tags
+	  tag_ids int[] not null
+	);
+	-- optimized index for tag queries
+	create extension if not exists intarray;
+	create index doc_tagids on doc 
+	  using gin(tag_ids gin__int_ops);
+	```
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	### IntArray Usage
+
+	```sql
+	-- standard tag query
+	select id from doc_int 
+	where tag_ids @> 51;
+
+	-- powerful boolean expression queries
+	select id from doc_int 
+	where tag_ids @@ '(51|(102&52))&!10';
+	```
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	http://github/oliy/dbslides/sql/tags.sql
+	- Generated test data for performance comparisons
+	- Compares JSONB, String Array, Intarray approaches
+
+	Note:
+	- JSON/JSONB/HSTORE works, but Array methods work better and are easy, too.
+	</textarea></section>
+</section>
+
+<section>
+	<section data-markdown><textarea data-templates>
+	## Trees
+	![Tree](img/jump_4tree.gif)<!-- .element height="60%" width="60%" -->
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Trees
+
+	Representing Hierchical Data
+	- File Systems
+	- Org Chart
+	- Categorizations
+
+	Key: Trees can be mapped to a linear space
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Materalized Path
+
+	```sql
+	create table tree_text (
+	  id serial primary key,
+	  path text not null
+	);
+	-- index for fast prefix matches
+	create index tree_text_path
+	  on tree_text(path text_pattern_ops);
+
+	-- Usage Example
+	select * from tree_text
+	where path like '2/22/%';
+	```
+
+	Note:
+	- Can also use Array, but string forms most performant
+	- Trades off storage for speed
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Interval Trees
+
+	```sql
+	create table tree_int (
+	  id serial primary key,
+	  -- each node stores the superset of subnode ranges
+	  pos int4range not null
+	);
+	-- index for optimized access on ranges
+	create index tree_int_pos on tree_int using gist(pos);
+
+	-- Usage Example
+	select *
+	from tree_int
+	where (
+	  -- load interval of target node
+	  select pos from tree_int where id = 22
+	) @> pos; 
+	```
+
+	Note:
+	- Also called Nested Sets
+	- With total ordering over set, a range interval represents the whole set
+	- Will skip building the table, but look in sql example.
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	http://github/oliy/dbslides/sql/tree.sql
+	- Compares Materialized Path to Interval Trees
+	- Compares Intarray vs String Path
+	</textarea></section>
+</section>
+
+<section>
+	<section data-markdown><textarea data-templates>
+	## CTE & Recursion
+	![Loop](img/jump_5cte.gif)<!-- .element height="60%" width="60%" -->
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Common Table Expressions
+
+	```sql
+	with table_name(... optional parameters ...) as (
+	  ... re-usable query ...
+	)
+	select ... generate results ...;
+	```
+
+	- re-use a query, like a table
+	- sort of like lambda for sql
+	- can be used to signal optimizations
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## CTE & Recursion
+	```sql
+	with recursive table_name(parameters) as (
+	  ... query to initialize values ...
+	  union all
+	  ... query to generate n+1 case ...
+	  where 
+	  ... termination clause ...
+	)
+	select ... generate results ...;
+	```
+
+	Note:
+	- Kind of like tail recursion or looping
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Example
+
+	```sql
+	with recursive numbers(val) as (
+	  select 1
+
+	  union all
+
+	  select val+1
+	  from numbers
+
+	  where val<100
+	)
+	-- assemble results
+	select sum(val )
+	from numbers;
+	```
+	</textarea></section>
+</section>
+
+<section>
+	<section data-markdown><textarea data-templates>
+	## Graphs (DAGs)
+	![Fancy](img/jump_6graph.gif)<!-- .element height="60%" width="60%" -->
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Directed Acyclic Graphs
+
+	Representing Reusable Relatioship
+	- Dependencies 
+	- Groups
+	- Version History
+	- Data Flow
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Structure
+
+	```sql
+	-- Structure for nodes
+	create table nodes (
+	  id serial primary key,
+	  name text unique not null
+	);
+
+	-- Structure for links
+	create table deps (
+	  parent int not null,
+	  child int not null,
+	  indirect boolean not null default false,
+	  primary key (parent, child)
+	);
+	```
+
+	Note:
+	- Node/Edges most common
+	- Using the npm package dependencies as example
+	- One wrinkle is the storage of indirect relationships
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Transitive Closure
+	- Links every node to all it's descendants
+	- Allows single query access to all graphs
+	- Good for common case: many shallow graphs
+	- Common optimization: TC only on non-leaf nodes
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Transitive Closure
+	#### part 1: Traversal
+
+	```sql
+	with recursive link_all(parent,child) as (
+	  -- Base case of direct children of root node
+	  select d.parent, d.child
+	  from deps d
+	  inner join nodes n on n.id = d.parent
+	  where n.name = 'dbslides'
+
+	  union all
+
+	  -- Add all linkages to next level of descendants
+	  select distinct node as parent, d.child
+	  from link_all l, unnest(ARRAY[l.parent,l.child]) as node, deps d
+	  where d.parent = l.child
+	)
+	...
+	```
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Transitive Closure
+	#### part 2: Linkage
+
+	```sql
+	-- Only add links that are not already included (direct links)
+	--   so remaining ones are indirect links
+	insert into deps
+	select distinct parent, child, true
+	from link_all l
+	where not exists (
+	  select 1 from deps d 
+	  where d.parent = l.parent and d.child = l.child
+	);
+	```
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Transitive Closure Usage
+	
+	```sql
+	select distinct nodes.name 
+	from deps
+	inner join nodes on nodes.id = deps.child
+	where deps.parent = 1;
+	```
+
+	Note:
+	- Can also find all usages
+	- Can be incrementally calculated (see Access)
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	http://github/oliy/dbslides/sql/graph.sql
+	</textarea></section>
+</section>
+
+<section>
+	<section data-markdown><textarea data-templates>
+	## SQL Sudoku solver
+	![Jumping the shark](img/jump_7sudoku.gif)<!-- .element height="60%" width="60%" -->
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Solution Overview
+
+	```sql
+	-- Recurse over all permutations of potential solutions
+	with recursive sudoku(board) AS ( 
+	  -- Initial Sudoku configuration
+	  select '53  7    6  195    98    6 8   6   34  8 3  17   2   6 6    28    419  5    8  79'
+	  union all
+	  select ...
+	  -- Recursion step, fill each blank with all possible values
+	  where ...
+	  -- each candidate doesn't generate an invalid board
+	)
+	-- display only complete boards
+	select ... where ...
+	```
+
+	Note:
+	- At core, brute force search
+	- Recursively tries all possible permutations of Sudoku boards 
+	- Finds subsequent configurations with out board conflicts.
+
+	</textarea></section>
+	
+	<section data-markdown><textarea data-templates>
+	## Recursion Step
+
+	```sql
+	-- Recursion step, fill each blank with values (1-9)
+	select 
+	  -- replace with digit
+	  substr(board, 1, pos-1) || digit || substr(board, pos+1)
+	from (
+	  -- find empty position
+	  select board, position(' ' in board) as pos from sudoku
+	) next, (
+	  -- try all possible digits
+	  select num::text AS digit FROM generate_series(1,9) num
+	) num
+	```
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Check for an invalid board
+
+	```sql
+	where pos > 0
+	and not exists (
+	  -- Find invalid configurations 
+	  --   "loop" over all positions, finding duplicates
+	  select 1
+	  from generate_series(1,9) i
+	  where
+	    -- duplicate within each row
+	    num.digit = substr(board, ((pos-1)/9)*9 + i, 1)
+	    -- duplicate within each column
+	    or num.digit = substr(board, mod(pos-1, 9) - 8 + i*9, 1)
+	    -- duplicate within each square
+	    or num.digit = substr(board, mod(((pos-1)/3), 3) * 3
+	      + ((pos-1)/27)*27 + i + ((i-1)/3)*6, 1)
+	)
+	```
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Solution!
+
+	```sql
+	   solved
+	-------------
+	 534|678|912+
+	 672|195|348+
+	 198|342|567+
+	 ---+---+---+
+	 859|761|423+
+	 426|853|791+
+	 713|924|856+
+	 ---+---+---+
+	 961|537|284+
+	 287|419|635+
+	 345|286|179+
+
+	(1 row)
+	```
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	http://github/oliy/dbslides/sql/sudoku.sql
+	</textarea></section>
+
+</section>
+
+<section>
+	<section data-markdown><textarea data-templates>
+	## SQL Recursive Raytrace
+	![Whaaaaaat?](img/jump_8ray.gif)<!-- .element height="60%" width="60%" -->
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	![Rendering](img/pgray.png "Ray Trace Rendering")
+
+	3hrs on MacBook Pro 15
+
+	Note:
+	- Do NOT run this in production.
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Brief Hilights
+
+	```sql
+	create type vec3 as (x float, y float, z float);
+
+	create or replace function add(a vec3, b vec3) returns vec3 as $$
+	  select a.x+b.x, a.y+b.y, a.z+b.z;
+	$$ language sql;
+
+	create or replace function sub(a vec3, b vec3) returns vec3 as $$
+	  select a.x-b.x, a.y-b.y, a.z-b.z;
+	$$ language sql;
+
+	...
+	```
+	- Reusable Vector library (3 axis)
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Brief Hilights (cont.)
+
+	```sql
+	create or replace function hit_sphere(center vec3, radius float, r ray) returns hit_record as $$
+	  with
+	    tmp1 as (select 
+	      sub(r.p, center) oc
+	    ),
+	    tmp2 as (select 
+	      length2(r.dir) a,
+	      dot(oc,r.dir) as b,
+	      length2(oc) - radius*radius as c
+	    from tmp1),
+	    tmp3 as (select 
+	      b*b - a*c as d 
+	    from tmp1,tmp2),
+	```
+	- Object intersection (quadratic equation on table)
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Brief Hilights (cont.)
+
+	```sql
+	create or replace function camera(r0 ray) returns vec3 as $$
+	  with recursive camera(r, depth, color) as (
+	    -- initial camera ray
+	    select r0, 20, (1,1,1)::vec3
+	    union all 
+	    select * 
+	    from (
+	      with
+	        cam as (select r, depth, color from camera), 
+	        -- find first intersection with things
+	        raycast as (
+	```
+	- Recursive raycasting
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Brief Hilights (cont.)
+
+	```sql
+	  select (avg((sample).x), avg((sample).y), avg((sample).z))::vec3 as pixel
+	  from (
+	    select camera((
+	      origin,
+	      sub( add( mul(vx,(u+(sx::float+random()*jitter)/ns::float)/nx::float - 0.5),
+	           mul(vy,0.5 - (v+(sy::float+random()*jitter)/ns::float)/ny::float)
+	      ), vz) 
+	    )) as sample
+	    from params, 
+	      generate_series(0,(select ns from params)-1) sx,
+	      generate_series(0,(select ns from params)-1) sy
+	  ) samples
+	```
+	- Pixel sub-sampling
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	## Brief Hilights (cont.)
+
+	```sql
+	select 'P3'
+	union all 
+	select nx::text || ' ' || ny::text as "P3" from params
+	union all select '255'
+	union all select color(pixel) from pixels
+	```
+	- PPM Image generation
+	</textarea></section>
+
+	<section data-markdown><textarea data-templates>
+	http://github/oliy/dbslides/sql/ray.sql
+	- Mostly direct SQL
+	  (No custom procedural logic in stored procs)
+	- Don't gaze directly at it.
+	- I'm sorry in advance.
+	</textarea></section>
+</section>
+
+
+<section>
+	<section data-markdown><textarea data-templates>
+	## Thanks for your patience!
+
+	The source of this insanity + author commentary:
+	* http://github/oliy/dbslides
+	* http://github/oliy/dbslides/sql
+	</textarea></section>
+</section>
+
+</div></div>
+
+<script src="js/reveal.js"></script>
+<script>
+	// More info about config & dependencies:
+	// - https://github.com/hakimel/reveal.js#configuration
+	// - https://github.com/hakimel/reveal.js#dependencies
+	Reveal.initialize({
+		dependencies: [
+			{ src: 'plugin/markdown/marked.js' },
+			{ src: 'plugin/markdown/markdown.js' },
+			{ src: 'plugin/notes/notes.js', async: true },
+			{ src: 'plugin/highlight/highlight.js', async: true },
+			{ src: 'socket.io/socket.io.js', async: true },
+			{ src: 'plugin/notes-server/client.js', async: true }
+		]
+	});
+</script>
+
+</body>
 </html>
