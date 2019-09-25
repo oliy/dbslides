@@ -45,17 +45,17 @@ slides: node_modules
 pivot:
 	$(PSQL) -f sql/pivot.sql -e
 
-pivot:
+pivot_agg:
 	$(PSQL) -f sql/pivot_agg.sql -e
 
-sudoku:
-	$(PSQL) -f sql/sudoku.sql -e
+tags:
+	$(PSQL) -f sql/tags.sql -e
 
 tree:
 	$(PSQL) -f sql/tree.sql -e
 
-tags:
-	$(PSQL) -f sql/tags.sql -e
+sudoku:
+	$(PSQL) -f sql/sudoku.sql -e
 
 ray:
 	$(PSQL) -f sql/ray.sql -qAt | grep -v '^$$' > img/tmp.ppm

@@ -48,7 +48,7 @@ where id in (
   -- skip already locked items
   for update skip locked
 )
-returning id
+returning id;
 
 
 -- Consume item on the queue (ADVISORY LOCK)
@@ -74,4 +74,4 @@ where id in (
 ) 
 -- must recheck for MVCC race conditions
 and processed is null
-returning id
+returning id;
